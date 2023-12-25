@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 )
 
 func main() {
@@ -28,18 +29,19 @@ func Run(server string) error {
 	if err != nil {
 		return err
 	}
-	//defer conn.Close() // XXX maybe?
+	defer conn.Close()
 
 	server += ":" + port
 	log.Println("listening")
 	for {
 		var buf [1024]byte
-		got := buf[:]
-		n, client, err := conn.ReadFrom(got)
+		n, client, err := conn.ReadFrom(buf[:])
+		data := buf[:n]
+		got := string(data)
 		log.Println("got", n, client, err, got)
-		if n == len(want) && string(got[:n]) == want {
+		if n == len(want) && got == want {
 			log.Println("hello:", client, server)
-			//go Forward(
+			go Forward(conn, client, server, data)
 			continue
 		}
 		if err != nil {
@@ -47,4 +49,40 @@ func Run(server string) error {
 			continue
 		}
 	}
+}
+
+func Forward(cconn net.PacketConn, client net.Addr, server string, data []byte) {
+	err := forward(cconn, client, server, data)
+	if err != nil {
+		fmt.Println("error:", err)
+	}
+}
+
+func forward(cconn net.PacketConn, client net.Addr, server string, data []byte) error {
+	sconn, err := net.DialTimeout("udp", server, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	defer sconn.Close()
+
+	_, err = sconn.Write(data)
+	if err != nil {
+		return err
+	}
+
+	var buf [1024]byte
+	n, err := sconn.Read(buf[:])
+	data = buf[:n]
+	got := string(data)
+	log.Println("got2", n, err, got)
+	if n > 0 {
+		_, err2 := cconn.WriteTo(data, client)
+		if err2 != nil {
+			if err != nil {
+				fmt.Println("error1:", err)
+			}
+			return err2
+		}
+	}
+	return err
 }
